@@ -22,7 +22,7 @@
 
 # COMMAND ----------
 
-ft_table_path = "alex_m.gen_ai.news_qa_summarization_output_ft_data"
+ft_table_path = "alex_m.gen_ai.news_qa_summarization_llm_output_ft_data"
 MODEL = 'meta-llama/Meta-Llama-3-8B-Instruct' # "student" model
 # MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
 REGISTER_TO = 'alex_m.gen_ai.llama_8b_instruct_structured_outputs' # where to register your finetuned model for deployment
@@ -32,13 +32,10 @@ DATA_PREP_CLUSTER_ID = spark.conf.get("spark.databricks.clusterUsageTags.cluster
 
 from pyspark.sql import functions as F
 
-data = spark.table(ft_table_path) \
-  # .drop("resp_total_tokens")
-  # .withColumn("response", F.to_json(F.col("response")))
-  # .withColumnRenamed("resp_chat_parsed", "response")
+data = spark.table(ft_table_path)
 
+print(f"Dataset count: {data.count()}")
 display(data)
-# data.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(ft_table_path)
 
 # COMMAND ----------
 

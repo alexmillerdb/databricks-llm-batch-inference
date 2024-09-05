@@ -186,11 +186,12 @@ def parse(s: str) -> str:
 
 
 class AsyncChatClient:
-    def __init__(self):
+    def __init__(self, chat_endpoint=True):
         self.client = httpx.AsyncClient(timeout=config_timeout)
         self.endpoint = config_endpoint
         self.prompt = config_prompt
         self.request_params = config_request_params
+        self.chat_endpoint = chat_endpoint
         print(f"[AsyncChatClient] prompt: {self.prompt}")
         print(f"[AsyncChatClient] request parameters: {self.request_params}")
 
@@ -218,16 +219,20 @@ class AsyncChatClient:
         else:
             messages.append({"role": "user", "content": str(text)})
 
+        request_body = {"messages": messages, **self.request_params}
+        if not self.chat_endpoint:
+            request_body = {"prompt": messages[0]["content"], **self.request_params}
+
         response = await self.client.post(
             url=url,
             headers=headers,
-            json={"messages": messages, **self.request_params},
+            json=request_body,
         )
         response.raise_for_status()
         response = response.json()
         return (
-            response["choices"][0]["message"]["content"],
-            parse(response["choices"][0]["message"]["content"]),
+            response["choices"][0]['text'],
+            # response["choices"][0]["message"]["content"],
             response["usage"]["total_tokens"],
         )
 
@@ -258,8 +263,9 @@ async def generate(client, i, text_with_index, semaphore, counter, start_time):
     async with semaphore:
         try:
             index, text = text_with_index
-            content, content_parsed, num_tokens = await client.predict(text)
-            response = (index, content, content_parsed, num_tokens, None)
+            # content, content_parsed, num_tokens = await client.predict(text)
+            content, num_tokens = await client.predict(text)
+            response = (index, content, num_tokens, None)
         except Exception as e:
             print(f"{i}th request failed with exception: {e}")
             response = (index, None, None, 0, str(e))
@@ -269,10 +275,10 @@ async def generate(client, i, text_with_index, semaphore, counter, start_time):
             print(f"processed total {counter.value} requests in {time.time() - start_time:.2f} seconds.")
         return response
 
-async def batch_inference(texts_with_index):
+async def batch_inference(texts_with_index, chat_endpoint=True):
     semaphore = asyncio.Semaphore(config_concurrecy)
     counter = AsyncCounter()
-    client = AsyncChatClient()
+    client = AsyncChatClient(chat_endpoint=chat_endpoint)
     start_time = time.time()
 
     tasks = [generate(client, i, text_with_index, semaphore, counter, start_time) for i, text_with_index in enumerate(texts_with_index)]
@@ -314,9 +320,34 @@ texts_with_index = [row for row in input_df.itertuples(index=False, name=None)]
 
 # COMMAND ----------
 
+# credencials = get_databricks_host_creds("databricks")
+# url = f"{credencials.host}/serving-endpoints/{config_endpoint}/invocations"
+# headers = {
+#     "Authorization": f"Bearer {credencials.token}",
+#     "Content-Type": "application/json",
+# }
+
+# messages = []
+# messages.append({"prompt": str(texts_with_index[0][1])})
+# import requests
+
+# response = requests.post(
+#     url=url,
+#     headers=headers,
+#     json={"prompt": str(texts_with_index[0][1]), **config_request_params},
+# )
+# response.raise_for_status()
+# response = response.json()
+
+# COMMAND ----------
+
+# print(response["usage"]["total_tokens"])
+
+# COMMAND ----------
+
 # DBTITLE 1,Step 3: Batch Inference
 start_time = time.time()
-responses = await batch_inference(texts_with_index)
+responses = await batch_inference(texts_with_index, chat_endpoint=False)
 processing_time = time.time() - start_time
 print(f"Total processing time: {processing_time:.2f} seconds.")
 
@@ -328,12 +359,15 @@ print(f"Total processing time: {processing_time:.2f} seconds.")
 # COMMAND ----------
 
 # DBTITLE 1,Step 4: Store Output to a Unity Catalog table
+from pyspark.sql import functions as F
 from pyspark.sql.functions import lit
 from pyspark.sql.types import IntegerType, StructType, StructField, StringType
 
 # Step 1: Create a DataFrame from model responses with indices
-schema = f"{index_column} long, resp_chat string, resp_chat_parsed struct<summary:string, sentiment:string, topic:string>, resp_total_tokens int, resp_error string"
-response_sdf = spark.createDataFrame(responses, schema=schema)
+# schema = f"{index_column} long, resp_chat string, resp_chat_parsed struct<summary:string, sentiment:string, topic:string>, resp_total_tokens int, resp_error string"
+schema = f"{index_column} long, resp_chat string, resp_total_tokens int, resp_error string"
+response_sdf = spark.createDataFrame(responses, schema=schema) \
+  .withColumn("resp_chat_parsed", F.from_json(F.col("resp_chat"), schema="struct<summary:string, sentiment:string, topic:string>"))
 
 
 # Step 2: Join the DataFrames on the index column

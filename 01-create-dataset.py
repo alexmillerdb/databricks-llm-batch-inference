@@ -4,9 +4,81 @@
 
 # COMMAND ----------
 
-catalog = "alex_m"
-schema = "gen_ai"
-endpoint = "llama38b"
+# MAGIC %md ### Step 0: Create PT endpoint (add notebook)
+
+# COMMAND ----------
+
+# MAGIC %md ### Update catalog, schema, and endpoint variables which will be used to write and create assets
+
+# COMMAND ----------
+
+import yaml
+
+with open('config.yaml', 'r') as file:
+    config = yaml.safe_load(file)
+
+# Access configuration values
+global_config = config['global']
+batch_inference_config = config['batch_inference']
+config
+
+# COMMAND ----------
+
+# config = {
+#   "catalog": "alex_m",
+#   "schema": "gen_ai",
+#   "batch_inference_config": {
+#     "endpoint_config": {
+#       "endpoint_name": "meta_llama_3_8b_instruct_frontier",
+#       "concurrency": 40
+#     },
+#     "request_config": {
+#       "chat": {
+#         "messages": [
+#           {
+#             "role": "user",
+#             "content": ["$prompt", "$text"]
+#           }
+#         ],
+#         "request_params": "$request_params"
+#       },
+#       "text": {
+#         "prompt": ["$prompt", "$text"],
+#         "request_params": "$request_params"
+#       },
+#       "request_params": {
+#         "max_tokens": 1000, 
+#         "temperature": 0
+#       },
+#     },
+#     "data_config": {
+#       "input_table_name": "news_qa_summarization",
+#       "output_table_name": "news_qa_summarization_llm_output",
+#       "input_column_name": "prompt",
+#       "prompt": ""
+#     },
+#     "client_config": {
+#       "timeout": 300,
+#       "max_retries_backpressure": 20,
+#       "max_retries_other": 5,
+#     }
+#   }
+# }
+
+# COMMAND ----------
+
+catalog = "main"
+schema = "alex_m"
+endpoint = "meta_llama_3_8b_instruct_frontier"
+
+# COMMAND ----------
+
+spark.sql(f"CREATE CATALOG IF NOT EXISTS {catalog}")
+spark.sql(f"CREATE DATABASE IF NOT EXISTS {catalog}.{schema}")
+
+# COMMAND ----------
+
+# MAGIC %md ### Using Hugging Face news-qa-summarization dataset as the example
 
 # COMMAND ----------
 
@@ -16,11 +88,11 @@ from datasets import load_dataset
 dataset = load_dataset("glnmario/news-qa-summarization")
 train_dataset = dataset['train'].to_pandas()
 spark_dataframe = spark.createDataFrame(train_dataset)
-spark_dataframe.write.mode("overwrite").saveAsTable(f"{catalog}.{schema}.news_qa_summarization")
+display(spark_dataframe)
 
 # COMMAND ----------
 
-display(spark.table(f"{catalog}.{schema}.news_qa_summarization"))
+# spark.sql(f"DROP TABLE IF EXISTS {catalog}.{schema}.news_qa_summarization")
 
 # COMMAND ----------
 
@@ -100,15 +172,13 @@ def parse(s: str) -> str:
 
 df = spark.table(f"{catalog}.{schema}.news_qa_summarization").toPandas()
 stories = df['story'].tolist()
-stories
 
 # COMMAND ----------
 
 structured_outputs = []
 story_list = []
 
-# while len(structured_outputs) < 20:
-for story in stories[:20]:
+for story in stories[:5]:
   response = parse(chain.invoke({"query": story}))
   if response:
     story_list.append(story)
@@ -119,37 +189,10 @@ for story in stories[:20]:
 import pandas as pd
 structured_df = pd.DataFrame({"story": story_list, "structured_outputs": structured_outputs})
 display(structured_df)
-# df = pd.DataFrame(structured_outputs).rename(columns={0:"question"})
-# df = spark.createDataFrame(df)
-# df.write.saveAsTable("rlaif.data.prompts_holdout")
-# display(df)
 
 # COMMAND ----------
 
 # MAGIC %md ### Add prompt template to column to use in inference code
-
-# COMMAND ----------
-
-prompt_template_str = """
-  <|begin_of_text|><|start_header_id|>system<|end_header_id|>
-  You are an AI assistant that specializes in data extraction. 
-  Your task is to generate a structured response that helps answer the user query based on format instructions. 
-  Please provide the output in JSON format as follows: 
-  
-  Below is an example of the structured output.
-  Always format the output in JSON format as follows:
-
-  ```json
-  {{
-    "summary": "summary of the story",
-    "sentiment": "sentiment of the story; choices=["positive", "negative", "neutral"]",
-    "topic": "topic of the story; choices=["finance", "technology", "sports", "politics", "crime", "weather"]"
-  }}
-  ```
-  <|eot_id|><|start_header_id|>user<|end_header_id|>
-
-  query: {query}  <|eot_id|><|start_header_id|>assistant<|end_header_id|>
-  """
 
 # COMMAND ----------
 
@@ -170,16 +213,12 @@ prompt_template_str = """<|begin_of_text|><|start_header_id|>system<|end_header_
   }}
   ```
   """
-  # <|eot_id|><|start_header_id|>user<|end_header_id|>"""
-
-  # query: {query}  <|eot_id|><|start_header_id|>assistant<|end_header_id|>
-  # """
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 
-df = spark.table(f"{catalog}.{schema}.news_qa_summarization") \
+df = spark_dataframe \
   .withColumn("prompt", F.concat(
     F.lit(prompt_template_str), 
     F.lit("\n query: "), F.col('story'), 
@@ -189,7 +228,7 @@ display(df)
 
 # COMMAND ----------
 
-df.write.mode("overwrite").option("mergeSchema", "true").saveAsTable(f"{catalog}.{schema}.news_qa_summarization")
+df.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable(f"{catalog}.{schema}.news_qa_summarization")
 
 # COMMAND ----------
 

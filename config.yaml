@@ -1,0 +1,45 @@
+# Global settings
+global:
+  catalog: alex_m
+  schema: gen_ai
+  dataset: news_qa_summarization
+
+# Batch inference configuration
+batch_inference:
+  endpoint:
+    name: meta_llama_3_8b_instruct_frontier
+    concurrency: 40
+
+  request:
+    params:
+      max_tokens: 1000
+      temperature: 0
+    chat:
+      messages:
+        - role: user
+          content: 
+            - ${prompt}
+            - ${text}
+    text:
+      prompt: 
+        - ${prompt}
+        - ${text}
+
+  data:
+    input:
+      table_name: ${global.dataset}
+      column_name: prompt
+    output:
+      table_name: ${global.dataset}_llm_output
+    prompt: ""
+
+  client:
+    timeout: 300
+    max_retries:
+      backpressure: 20
+      other: 5
+
+# Variable definitions
+variables:
+  prompt: ${prompt}
+  text: ${text}
