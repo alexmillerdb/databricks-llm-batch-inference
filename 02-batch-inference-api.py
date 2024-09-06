@@ -32,80 +32,6 @@ from databricks.sdk import WorkspaceClient
 
 # COMMAND ----------
 
-# Client Configuration
-dbutils.widgets.text("endpoint", "databricks-dbrx-instruct", "Endpoint")
-dbutils.widgets.text("timeout", "300", "Timeout")
-dbutils.widgets.text("max_retries_backpressure", "20", "#Max Retries (backpressure)")
-dbutils.widgets.text("max_retries_other", "5", "#Max Retries (other error)")
-
-# Client Request Configuration
-dbutils.widgets.text("prompt", "Can you tell me the name of the US state that serves the provided ZIP code? zip code: ", "Prompt (system)")
-dbutils.widgets.text("request_params", '{"max_tokens": 1000, "temperature": 0}', "Chat Request Params")
-
-# Batch Inference Configuration
-dbutils.widgets.text("concurrency", "15", "#Concurrency Requests")
-
-# Table Configuration
-dbutils.widgets.text("input_table_name", "samples.nyctaxi.trips", "Input Table Name")
-dbutils.widgets.text("input_column_name", "pickup_zip", "Input Column Name")
-dbutils.widgets.text("input_num_rows", "100", "Input Number Rows")
-dbutils.widgets.text("output_table_name", "main.default.nyctaxi_trips_llm_output", "Output Table Name")
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Parameters
-# MAGIC
-# MAGIC   | Parameter Name      | Example Value | Description | 
-# MAGIC   | --------------- | ---------------------- | ------------------------------- | 
-# MAGIC   | `endpoint` | databricks-dbrx-instruct | The name of the Databricks Serving endpoint. You can find the endpoint name under the `Serving` tab. | 
-# MAGIC   | `prompt` | Can you tell me the name of the US state that serves the provided ZIP code? | The system prompt to use in the batch inference. | 
-# MAGIC   | `input_table_name` | samples.nyctaxi.trips | The name of the input table in Unity Catalog. | 
-# MAGIC   | `input_column_name` | pickup_zip | The name of the column in the input table to use.   | 
-# MAGIC   | `input_num_rows` | 1000 | The number of rows to process for the input table. |
-# MAGIC   | `output_table_name` | main.default.nyctaxi_trips_llm_output | The name of the output table in Unity Catalog. All of the input columns and the inference result columns (such as `chat`, `total_tokens`, `error_message`) are persisted in the output table.  |
-# MAGIC
-# MAGIC ## Addtional parameters
-# MAGIC   | Parameter Name      | Example Value | Description | 
-# MAGIC   | --------------- | ---------------------- | ------------------------------- | 
-# MAGIC   | `concurrency` | 15 | The number of concurrent requests send to server. | 
-# MAGIC   | `timeout` | 300 | The timeout for an HTTP request on the client side |
-# MAGIC   | `max_retries_backpressure` | 20 | The maximum number of retries due to a backpressure status code (such as 429 or 503). | 
-# MAGIC   | `max_retries_other` | 5 | The maximum number of retries due to non-backpressure status code (such as 5xx, 408, or 409). | 
-# MAGIC   | `request_params` | {"max_tokens": 1000, "temperature": 0} | The extra chat http request parameters in json format (reference: https://docs.databricks.com/en/machine-learning/foundation-models/api-reference.html#chat-request) | 
-
-# COMMAND ----------
-
-# Load configurations from widgets
-config_endpoint = dbutils.widgets.get("endpoint")
-config_timeout = int(dbutils.widgets.get("timeout"))
-config_max_retries_backpressure = int(dbutils.widgets.get("max_retries_backpressure"))
-config_max_retries_other = int(dbutils.widgets.get("max_retries_other"))
-
-config_prompt = dbutils.widgets.get("prompt")
-config_request_params = json.loads(
-    dbutils.widgets.get("request_params")
- ) # Reference: https://docs.databricks.com/en/machine-learning/foundation-models/api-reference.html#chat-request
-
-config_concurrecy = int(dbutils.widgets.get("concurrency"))
-config_logging_interval = 40
-
-config_input_table = dbutils.widgets.get("input_table_name")
-config_input_column = dbutils.widgets.get("input_column_name")
-config_input_num_rows = dbutils.widgets.get("input_num_rows")
-if config_input_num_rows:
-    config_input_num_rows = int(config_input_num_rows)
-config_output_table = dbutils.widgets.get("output_table_name")
-
-print(f"endpoint: {config_endpoint}")
-print(f"config prompt: {config_prompt}")
-print(f"config request parameters: {config_request_params}")
-print(f"concurrency: {config_concurrecy}")
-print(f"config input table: {config_input_table}")
-print(f"config input column: {config_input_column}")
-
-# COMMAND ----------
-
 # MAGIC %md
 # MAGIC ## Batch inference client & API
 # MAGIC
@@ -116,77 +42,46 @@ print(f"config input column: {config_input_column}")
 
 # COMMAND ----------
 
-# import mlflow
-# import os
-# import openai
-# from openai import OpenAI
+# DBTITLE 1,Batch Inference client API
+# 1. Config Management
+from pydantic import BaseModel, Field, validator
+from typing import List, Tuple, Optional, Dict, Any
+from abc import ABC, abstractmethod
+import asyncio
+import time
 
-# # Get the API endpoint and token for the current notebook context
-# API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
-# API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
+class InferenceConfig(BaseModel):
+    endpoint: str = Field(default="databricks-meta-llama-3-1-70b-instruct")
+    timeout: int = Field(default=300)
+    max_retries_backpressure: int = Field(default=3)
+    max_retries_other: int = Field(default=3)
+    prompt: Optional[str] = Field(default=None)
+    request_params: Dict = Field(default_factory=dict)
+    concurrency: int = Field(default=15)
+    logging_interval: int = Field(default=40)
+    enable_logging: bool = Field(default=True)
+    llm_task: str = Field(default="", choices=["chat", "completion"])
 
-# client = OpenAI(
-#     api_key=API_TOKEN,
-#     base_url=f"{API_ROOT}/serving-endpoints"
-# )
+    @validator('endpoint', 'llm_task', always=True)
+    def check_required_fields(cls, v, field):
+        assert v, f"{field.name} is required and cannot be empty"
+        return v
 
-# response = client.chat.completions.create(
-#     model=config_endpoint,
-#     messages=[
-#       {
-#         "role": "system",
-#         "content": "You are a helpful assistant."
-#       },
-#       {
-#         "role": "user",
-#         "content": "What is a mixture of experts model?",
-#       }
-#     ],
-#     max_tokens=256
-# )
-# prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-  
-#   You are an AI assistant that specializes in data extraction. When you receive a query, you should respond only with a structured response that helps answer the user query based on format instructions.
-#   Always provide the output in JSON format based on the users query and instructions.<|eot_id|>
-#   <|start_header_id|>user<|end_header_id|>
-  
-#   Given the following query, respond with a JSON response that follows the format instructions.
-#   Below is an example of the structured output.
+    @validator('request_params', always=True)
+    def check_request_params(cls, v):
+        assert v, "request_params is required and cannot be empty"
+        return v
 
-#   ```json
-#   {{
-#     "summary": "summary of the story",
-#     "sentiment": "sentiment of the story; choices=["positive", "negative", "neutral"]",
-#     "topic": "topic of the story; choices=["finance", "technology", "sports", "politics", "crime", "weather"]"
-#   }}
-#   ```
-  
-#  query: ATLANTA, Georgia (CNN) -- They prefer the darkness and calm of early morning when their targets are most vulnerable, still sleeping or under the influence. They make sure their prey -- suspected killers and other violent fugitives -- know what they're up against. U.S. Marshal supervisory inspector James Ergas takes aim during a computer-simulated attack. "When they wake up to a submachine gun and flashlight in their face, they tend not to fight," says James Ergas, the supervisory inspector for the U.S. Marshals Southeast Regional Fugitive Task Force. The U.S. Marshals Service is the nation's oldest law enforcement agency and best known for protecting federal judges, transporting federal prisoners and protecting witnesses. Less known is the cutting-edge work of the agency's six regional task forces in capturing suspects. The task force in Atlanta is located in a nondescript warehouse office park. In 2007, the investigators from the Southeast task force arrested more than 3,000 suspects; only once did the Marshals exchange gunfire, Ergas says.  Watch Ergas blast bad guys in simulated attack » "This is the crème de la crème of the Marshal Service," says Eugene O'Donnell, a former prosecutor and New York City police officer who now teaches at the John Jay College of Criminal Justice in New York. On any given day, Ergas and his force are tracking 10 to 15 suspected killers roaming the Southeast, while also searching for other violent offenders. Already this year, they have been involved in a number of high-profile searches: Gary Michael Hilton, the suspect charged in the killing of Meredith Emerson who disappeared while hiking in northern Georgia; a fugitive Marine wanted in connection with the killing of Lance Cpl. Maria Lauterbach in North Carolina; and suspects wanted in connection with the killings of two suburban Atlanta police officers. But most of the time they're chasing suspects outside of the glare of the media spotlight. "Our mandate is to track violent fugitives -- murderers, armed robbers, rapists and fugitives of that caliber," says Keith Booker, the commander of the task force.  Watch Booker describe their mission » One suspect currently being hunted is Charles Leon Parker who has been on the run since the 1980s after being accused of molesting his stepdaughters. The Marshals were brought in recently, Booker says, after Parker allegedly called one of his victims and said, "I wanted you to know I saw you and your daughter, and she sure is beautiful." O'Donnell says it takes highly trained, high energy, "really special people" to do such work day in and day out, especially when they're up against "some of the most dangerous individuals in the country." "It's not an exaggeration to say they're the front of the front line," O'Donnell says. "It's not going to get any more challenging than this in law enforcement." To make sure they are well prepared, the Atlanta office is equipped with a locker full of high-powered weaponry; a high-tech operations center, complete with flat screen TVs, where they communicate directly with investigators in the field; a two-story house for training; and a 300-degree computer simulator that puts the Marshals into real life danger scenarios. In one demonstration, Ergas steps into the simulator and responds to reports of shots fired at a workplace. A woman rushes to a victim on the ground, as Ergas barks out commands. Moments later, a man rounds the corner. He too tends to the victim. Suddenly, the gunman runs into the corner and Ergas opens fire with his Glock. The suspect hits the ground.  Watch Ergas say there's no better training than the simulator » A split second later, another gunman emerges, and Ergas blasts him too. Think of it as Wii on steroids. "These are things you cannot get on a range," Ergas says. There are 50 different scenarios the simulator can create, with a technician able to change each scenario. A trainee can use a shotgun, rifle, Glock 22 or Glock 23. The guns shoot a laser<|eot_id|>
-# <|start_header_id|>assistant<|end_header_id|>"""
+# 2. API Client
+class APIClientInterface(ABC):
+    @abstractmethod
+    async def predict(self, text: str) -> Tuple[str, int]:
+        pass
 
-# response = client.completions.create(
-#     model="llama_8b_instruct_structured_outputs",
-#     prompt=[prompt],
-#     max_tokens=256
-# )
-# response
-
-
-# COMMAND ----------
-
-# Utility functions
-def is_backpressure(error: httpx.HTTPStatusError):
-    if hasattr(error, "response") and hasattr(error.response, "status_code"):
-        return error.response.status_code in (429, 503)
-
-def is_other_error(error: httpx.HTTPStatusError):
-    if hasattr(error, "response") and hasattr(error.response, "status_code"):
-        return error.response.status_code != 503 and (
-            error.response.status_code >= 500 or error.response.status_code == 408
-        )
-
-class AsyncChatClient:
-    def __init__(self, chat_endpoint=True):
+class OpenAIClient(APIClientInterface):
+    def __init__(self, config: InferenceConfig):
+        self.config = config
+        # Initialize OpenAI client
         API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
         API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
 
@@ -194,33 +89,17 @@ class AsyncChatClient:
             api_key=API_TOKEN,
             base_url=f"{API_ROOT}/serving-endpoints"
         )
-        self.endpoint = config_endpoint
-        self.prompt = config_prompt
-        self.request_params = config_request_params
-        self.chat_endpoint = chat_endpoint
-        print(f"[AsyncChatClient] prompt: {self.prompt}")
-        print(f"[AsyncChatClient] request parameters: {self.request_params}")
 
-    @retry(
-        retry=retry_if_exception(is_other_error),
-        stop=stop_after_attempt(config_max_retries_other),
-        wait=wait_random_exponential(multiplier=1, max=20),
-    )
-    @retry(
-        retry=retry_if_exception(is_backpressure),
-        stop=stop_after_attempt(config_max_retries_backpressure),
-        wait=wait_random_exponential(multiplier=1, max=20),
-    )
-    async def predict(self, text):
+    async def predict(self, text: str) -> Tuple[str, int]:
         # If the model is chat-based, use the ChatCompletion API
-        if self.chat_endpoint:
-            messages = [{"role": "user", "content": self.prompt + str(text) if self.prompt else str(text)}]
+        if self.config.llm_task == "chat":
+            messages = [{"role": "user", "content": self.config.prompt + str(text) if self.config.prompt else str(text)}]
             try:
                 response = await asyncio.to_thread(
                     self.client.chat.completions.create,
-                    model=self.endpoint,
+                    model=self.config.endpoint,
                     messages=messages,
-                    **self.request_params
+                    **self.config.request_params
                 )
                 content = response.choices[0].message.content
                 total_tokens = response.usage.total_tokens
@@ -230,13 +109,13 @@ class AsyncChatClient:
                 raise
 
         # If the model expects plain completion (non-chat)
-        else:
+        elif self.config.llm_task == "completion":
             try:
                 response = await asyncio.to_thread(
                     self.client.completions.create,
-                    model=self.endpoint,
-                    prompt=self.prompt + str(text) if self.prompt else str(text),
-                    **self.request_params
+                    model=self.config.endpoint,
+                    prompt=self.config.prompt + str(text) if self.config.prompt else str(text),
+                    **self.config.request_params
                 )
                 content = response.choices[0].text
                 total_tokens = response.usage.total_tokens
@@ -245,86 +124,221 @@ class AsyncChatClient:
                 print(f"Error while making OpenAI Completion API call: {e}")
                 raise
 
-class AsyncCounter:
-    def __init__(self):
-        self.value = 0
+# 3. Inference Engine
+class InferenceEngine:
+    def __init__(self, client: APIClientInterface):
+        self.client = client
 
-    async def increment(self):
-        self.value += 1
+    async def infer(self, text: str) -> Tuple[str, int]:
+        return await self.client.predict(text)
+      
+# 4. Batch Processing
+class BatchProcessor:
+    def __init__(self, engine: InferenceEngine, config: InferenceConfig):
+        self.engine = engine
+        self.config = config
 
-async def generate(client, i, text_with_index, semaphore, counter, start_time):
-    async with semaphore:
+    async def process_item(self, item: Tuple[int, str]) -> Tuple[int, Optional[str], int, Optional[str]]:
+        index, text = item
         try:
-            index, text = text_with_index
-            content, num_tokens = await client.predict(text)
-            response = (index, content, num_tokens, None)
+            content, num_tokens = await self.engine.infer(text)
+            return (index, content, num_tokens, None)
         except Exception as e:
-            print(f"{i}th request failed with exception: {e}")
-            response = (index, None, 0, str(e))
+            return (index, None, 0, str(e))
 
-        await counter.increment()
-        if counter.value % config_logging_interval == 0:
-            print(f"processed total {counter.value} requests in {time.time() - start_time:.2f} seconds.")
-        return response
+    async def process_batch(self, items: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
+        semaphore = asyncio.Semaphore(self.config.concurrency)
+        async def process_with_semaphore(item):
+            async with semaphore:
+                return await self.process_item(item)
+        return await asyncio.gather(*[process_with_semaphore(item) for item in items])
+      
+# 5. Error Handling
+def is_backpressure(error: httpx.HTTPStatusError):
+    if hasattr(error, "response") and hasattr(error.response, "status_code"):
+        return error.response.status_code in (429, 503)
 
-async def batch_inference(texts_with_index, chat_endpoint=True):
-    semaphore = asyncio.Semaphore(config_concurrecy)
-    counter = AsyncCounter()
-    client = AsyncChatClient(chat_endpoint=chat_endpoint)
-    start_time = time.time()
+def is_other_error(error: httpx.HTTPStatusError):
+    if hasattr(error, "response") and hasattr(error.response, "status_code"):
+        return error.response.status_code != 503 and (
+            error.response.status_code >= 500 or error.response.status_code == 408)
+        
+# 6. Logging
+class Logger:
+    def __init__(self, config: InferenceConfig):
+        self.config = config
+        self.counter = 0
+        self.start_time = time.time()
+        self.enable_logging = config.enable_logging
 
-    tasks = [generate(client, i, text_with_index, semaphore, counter, start_time) for i, text_with_index in enumerate(texts_with_index)]
-    responses = await asyncio.gather(*tasks)
+    def log_progress(self):
+        if not self.enable_logging:
+            return
+        self.counter += 1
+        if self.counter % self.config.logging_interval == 0:
+            elapsed = time.time() - self.start_time
+            print(f"Processed {self.counter} requests in {elapsed:.2f} seconds.")
+    
+    def log_total_time(self, total_items: int):
+        if not self.enable_logging:
+            return
+        total_time = time.time() - self.start_time
+        print(f"Total processing time: {total_time:.2f} seconds for {total_items} items.")
+        print(f"Average time per item: {total_time/total_items:.4f} seconds.")
 
-    return responses
+# Main class tying it all together
+class BatchInference:
+    def __init__(self, config: InferenceConfig):
+        self.config = config
+        client = OpenAIClient(config)
+        self.engine = InferenceEngine(client)
+        self.processor = BatchProcessor(self.engine, config)
+        self.logger = Logger(config)
+
+    async def __call__(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
+        self.logger.start_time = time.time()  # Reset start time
+        results = await self.processor.process_batch(texts_with_index)
+        for _ in results:
+            self.logger.log_progress()
+        self.logger.log_total_time(len(texts_with_index))
+        return results
+
+# COMMAND ----------
+
+import uuid
+from typing import List, Tuple, Optional
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import monotonically_increasing_id
+import pandas as pd
+
+class DataProcessorConfig:
+    def __init__(self, input_table_name: str, input_column_name: str, input_num_rows: Optional[int] = None):
+        self.input_table_name = input_table_name
+        self.input_column_name = input_column_name
+        self.input_num_rows = input_num_rows
+
+class DataProcessor:
+    def __init__(self, spark: SparkSession, config: DataProcessorConfig):
+        self.spark = spark
+        self.config = config
+        self.index_column = f"index_{uuid.uuid4().hex[:4]}"
+        self.source_sdf: Optional[DataFrame] = None
+        self.input_sdf: Optional[DataFrame] = None
+        self.texts_with_index: Optional[List[Tuple[int, str]]] = None
+
+    def load_spark_dataframe(self) -> DataFrame:
+        """Load the Spark DataFrame from the input table and add an index column."""
+        self.source_sdf = (self.spark.table(self.config.input_table_name)
+                           .withColumn(self.index_column, monotonically_increasing_id()))
+        return self.source_sdf
+
+    def select_and_limit_data(self, sdf: DataFrame) -> DataFrame:
+        """Select required columns and optionally limit the number of rows."""
+        result = sdf.select(self.index_column, self.config.input_column_name)
+        if self.config.input_num_rows:
+            result = result.limit(self.config.input_num_rows)
+        self.input_sdf = result
+        return self.input_sdf
+
+    def convert_to_list(self, sdf: DataFrame) -> List[Tuple[int, str]]:
+        """Convert Spark DataFrame to a list of tuples."""
+        pandas_df = sdf.toPandas()
+        return [row for row in pandas_df.itertuples(index=False, name=None)]
+
+    def process(self) -> List[Tuple[int, str]]:
+        """Main method to process the data."""
+        self.source_sdf = self.load_spark_dataframe()
+        self.input_sdf = self.select_and_limit_data(self.source_sdf)
+        self.texts_with_index = self.convert_to_list(self.input_sdf)
+        return self.texts_with_index
+
+    def get_source_sdf(self) -> Optional[DataFrame]:
+        """Get the source Spark DataFrame."""
+        return self.source_sdf
+
+    def get_input_sdf(self) -> Optional[DataFrame]:
+        """Get the input Spark DataFrame."""
+        return self.input_sdf
+
+    def get_texts_with_index(self) -> Optional[List[Tuple[int, str]]]:
+        """Get the processed list of texts with index."""
+        return self.texts_with_index
+
+# Usage
+spark = SparkSession.builder.getOrCreate()  # You would typically get this from your Spark environment
+data_config = DataProcessorConfig(
+    input_table_name="alex_m.gen_ai.news_qa_summarization",
+    input_column_name="prompt",
+    input_num_rows=1000  # Optional
+)
+
+processor = DataProcessor(spark, data_config)
+texts_with_index = processor.process()
+
+# Now you can access the DataFrames and the processed list
+source_sdf = processor.get_source_sdf()
+input_sdf = processor.get_input_sdf()
+texts_with_index = processor.get_texts_with_index()
+index_column = processor.index_column
+
+# You can use these variables as needed
+if source_sdf:
+    print("Source DataFrame count:", source_sdf.count())
+if input_sdf:
+    print("Input DataFrame count:", input_sdf.count())
+if texts_with_index:
+    print("Number of processed texts:", len(texts_with_index))
 
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Run batch inference
-# MAGIC
-# MAGIC The following code loads a Spark dataframe of the input data table and then converts that dataframe into a list of text that the model can process.
 
 # COMMAND ----------
 
-import uuid
-from pyspark.sql.functions import monotonically_increasing_id
+# DBTITLE 1,Run Batch Inference on "chat" endpoint
+inference_config = InferenceConfig(
+    endpoint="databricks-meta-llama-3-1-70b-instruct",
+    timeout=300,
+    max_retries_backpressure=3,
+    max_retries_other=3,
+    prompt="",
+    request_params={"temperature": 0.7, "max_tokens": 100},
+    concurrency=15,
+    logging_interval=40,
+    llm_task="chat",
+    enable_logging=False
+)
 
-index_column = f"index_{uuid.uuid4().hex[:4]}"
-
-## Step 1. Load spark dataframe from input table
-source_sdf = spark.table(config_input_table).withColumn(index_column, monotonically_increasing_id())
-
-input_sdf = source_sdf.select(index_column, config_input_column)
-if config_input_num_rows:
-    input_sdf = input_sdf.limit(config_input_num_rows)
-
-## Step 2. Convert spark dataframe to list of texts
-input_df = input_sdf.toPandas()
-texts_with_index = [row for row in input_df.itertuples(index=False, name=None)]
+batch_inference = BatchInference(inference_config)
+results = await batch_inference(texts_with_index)
+results
 
 # COMMAND ----------
 
-w = WorkspaceClient()
+# DBTITLE 1,Run inference on "completion" endpoint
+inference_config = InferenceConfig(
+    endpoint="llama_8b_instruct_structured_outputs",
+    timeout=300,
+    max_retries_backpressure=3,
+    max_retries_other=3,
+    prompt="",
+    request_params={"temperature": 0.7, "max_tokens": 100},
+    concurrency=15,
+    logging_interval=40,
+    llm_task="completion",
+    enable_logging=True # TO DO fix logging code
+)
 
-endpoint = w.serving_endpoints.get(config_endpoint)
-endpoint_task = endpoint.task
-
-if 'chat' in endpoint_task:
-  chat_endpoint = True
-elif 'completions' in endpoint_task:
-  chat_endpoint = False
-
-start_time = time.time()
-responses = await batch_inference(texts_with_index, chat_endpoint=chat_endpoint)
-processing_time = time.time() - start_time
-print(f"Total processing time: {processing_time:.2f} seconds.")
+batch_inference = BatchInference(inference_config)
+results = await batch_inference(texts_with_index)
+results
 
 # COMMAND ----------
 
 # MAGIC %md 
-# MAGIC The following stores the output to a Unity Catalog table.
+# MAGIC ## Join responses to source dataframe and write to UC
 
 # COMMAND ----------
 
@@ -363,7 +377,7 @@ schema = f"{index_column} long, resp_chat string, resp_total_tokens int, resp_er
 json_schema = "struct<summary:string, sentiment:string, topic:string>"
 
 # Dynamically check if the UDF needs to be applied or not
-response_sdf = spark.createDataFrame(responses, schema=schema) \
+response_sdf = spark.createDataFrame(results, schema=schema) \
     .withColumn(
         "resp_chat_clean",
         F.when(is_json_valid_udf("resp_chat"), F.col("resp_chat"))  # If already structured, use as is
@@ -376,10 +390,10 @@ response_sdf = spark.createDataFrame(responses, schema=schema) \
 output_sdf = source_sdf.join(response_sdf, on=index_column).drop(index_column)
 output_sdf.display()
 # Step 3: Persistent the final spark dataframe into UC output table
-output_sdf.write.mode("overwrite").option("mergeSchema", "true").saveAsTable(config_output_table)
+output_sdf.write.mode("overwrite").option("mergeSchema", "true").saveAsTable("alex_m.gen_ai.news_qa_summarization_llm_output")
 
 # COMMAND ----------
 
 null_ct = output_sdf.filter(F.col("resp_chat_parsed").isNull()).count()
 print(f"Total null ct: {null_ct}")
-print(f"Percent null ct: {null_ct / config_input_num_rows}")
+print(f"Percent null ct: {null_ct / output_sdf.count()}")
