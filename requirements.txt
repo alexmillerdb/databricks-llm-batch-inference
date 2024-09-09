@@ -1,0 +1,10 @@
+httpx==0.27.0
+mlflow
+tenacity==8.2.3
+pyspark
+openai
+pydantic
+databricks-sdk
+databricks-connect
+asyncio
+nest-asyncio
