@@ -42,3 +42,6 @@ class BatchInference:
             self.logger.log_progress()
         self.logger.log_total_time(len(texts_with_index))
         return results
+    
+    async def run_batch_inference(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
+        return await self(texts_with_index)
