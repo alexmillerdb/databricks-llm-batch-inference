@@ -3,6 +3,19 @@
 
 import sys
 import os
+from databricks.connect import DatabricksSession
+# from pyspark.dbutils import DBUtils
+
+# # Get the current notebook path
+spark = DatabricksSession.builder.getOrCreate()
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..'))
+sys.path.append(root_directory)
+
+# # Verify the paths
+# print(sys.path)
+# print(f"Current directory: {current_directory}")
+
 import asyncio
 import mlflow
 from pyspark.sql import SparkSession
@@ -36,10 +49,13 @@ inference_config = InferenceConfig(
     enable_logging=False
 )
 
-async def main(data_config, inference_config):
+if __name__ == "__main__":
+    # spark = SparkSession.builder.getOrCreate()
+    
+    # Get API_ROOT and API_TOKEN
     API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
     API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
-
+    
     processor = DataProcessor(spark, data_config)
     texts_with_index = processor.process()
 
@@ -49,7 +65,8 @@ async def main(data_config, inference_config):
     texts_with_index = processor.get_texts_with_index()
     index_column = processor.index_column
 
-    # You can use these variables as needed
+    # Print information about the processed data
+    assert source_sdf, "Source DataFrame is not available"
     if source_sdf:
         print("Source DataFrame count:", source_sdf.count())
     if input_sdf:
@@ -57,17 +74,13 @@ async def main(data_config, inference_config):
     if texts_with_index:
         print("Number of processed texts:", len(texts_with_index))
 
-    print(f"Running batch inference")
-    batch_inference = BatchInference(config=inference_config, API_ROOT=API_ROOT, API_TOKEN=API_TOKEN)
-    results = await batch_inference(texts_with_index)
+    # Create BatchInference
+    batch_inference = BatchInference(inference_config, API_TOKEN, API_ROOT)
 
-    return results
+    # Run batch inference
+    print("Running batch inference")
+    results = asyncio.run(batch_inference.run_batch_inference(texts_with_index))
 
-if __name__ == "__main__":
-    # spark = get_spark_session()
-    loop = asyncio.get_event_loop()
-    results = loop.run_until_complete(main(data_config=data_config, 
-                                           inference_config=inference_config))
-    results = asyncio.run(main(data_config=data_config, inference_config=inference_config))
     print(results)
     assert len(results) == data_config.input_num_rows, "Results length does not match the data input"
+    print("Batch inference completed successfully")
