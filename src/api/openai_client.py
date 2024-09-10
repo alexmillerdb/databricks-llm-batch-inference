@@ -4,9 +4,16 @@ import mlflow
 from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception
 
-from .client_interface import APIClientInterface
-from config.inference_config import InferenceConfig
-from utils.error_handlers import is_backpressure, is_other_error
+import os
+import sys
+
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..', '..'))
+sys.path.append(root_directory)
+
+from src.api.client_interface import APIClientInterface
+from src.config.inference_config import InferenceConfig
+from src.utils.error_handlers import is_backpressure, is_other_error
 
 class OpenAIClient(APIClientInterface):
     def __init__(self, config: InferenceConfig, API_ROOT: str, API_TOKEN: str):

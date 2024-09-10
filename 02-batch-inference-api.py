@@ -1,9 +1,6 @@
 # Databricks notebook source
-# Install openai package
-%pip install httpx==0.27.0
-%pip install mlflow==2.11.1
-%pip install tenacity==8.2.3
-dbutils.library.restartPython()
+# MAGIC %pip install -r requirements.txt
+# MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
 
@@ -42,236 +39,65 @@ from databricks.sdk import WorkspaceClient
 
 # COMMAND ----------
 
-# DBTITLE 1,Batch Inference client API
-# 1. Config Management
-from pydantic import BaseModel, Field, validator
-from typing import List, Tuple, Optional, Dict, Any
-from abc import ABC, abstractmethod
-import asyncio
-import time
+import sys
+import os
+from databricks.connect import DatabricksSession
+# from pyspark.dbutils import DBUtils
 
-# 
-class InferenceConfig(BaseModel):
-    endpoint: str = Field(default="databricks-meta-llama-3-1-70b-instruct")
-    timeout: int = Field(default=300)
-    max_retries_backpressure: int = Field(default=3)
-    max_retries_other: int = Field(default=3)
-    prompt: Optional[str] = Field(default=None)
-    request_params: Dict = Field(default_factory=dict)
-    concurrency: int = Field(default=15)
-    logging_interval: int = Field(default=40)
-    enable_logging: bool = Field(default=True)
-    llm_task: str = Field(default="", choices=["chat", "completion"])
-
-    @validator('endpoint', 'llm_task', always=True)
-    def check_required_fields(cls, v, field):
-        assert v, f"{field.name} is required and cannot be empty"
-        return v
-
-    @validator('request_params', always=True)
-    def check_request_params(cls, v):
-        assert v, "request_params is required and cannot be empty"
-        return v
-
-# 2. API Client
-class APIClientInterface(ABC):
-    @abstractmethod
-    async def predict(self, text: str) -> Tuple[str, int]:
-        pass
-
-class OpenAIClient(APIClientInterface):
-    def __init__(self, config: InferenceConfig):
-        self.config = config
-        # Initialize OpenAI client
-        API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
-        API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
-
-        self.client = OpenAI(
-            api_key=API_TOKEN,
-            base_url=f"{API_ROOT}/serving-endpoints"
-        )
-
-    async def predict(self, text: str) -> Tuple[str, int]:
-        # If the model is chat-based, use the ChatCompletion API
-        if self.config.llm_task == "chat":
-            messages = [{"role": "user", "content": self.config.prompt + str(text) if self.config.prompt else str(text)}]
-            try:
-                response = await asyncio.to_thread(
-                    self.client.chat.completions.create,
-                    model=self.config.endpoint,
-                    messages=messages,
-                    **self.config.request_params
-                )
-                content = response.choices[0].message.content
-                total_tokens = response.usage.total_tokens
-                return content, total_tokens
-            except Exception as e:
-                print(f"Error while making OpenAI ChatCompletion API call: {e}")
-                raise
-
-        # If the model expects plain completion (non-chat)
-        elif self.config.llm_task == "completion":
-            try:
-                response = await asyncio.to_thread(
-                    self.client.completions.create,
-                    model=self.config.endpoint,
-                    prompt=self.config.prompt + str(text) if self.config.prompt else str(text),
-                    **self.config.request_params
-                )
-                content = response.choices[0].text
-                total_tokens = response.usage.total_tokens
-                return content, total_tokens
-            except Exception as e:
-                print(f"Error while making OpenAI Completion API call: {e}")
-                raise
-
-# 3. Inference Engine
-class InferenceEngine:
-    def __init__(self, client: APIClientInterface):
-        self.client = client
-
-    async def infer(self, text: str) -> Tuple[str, int]:
-        return await self.client.predict(text)
-      
-# 4. Batch Processing
-class BatchProcessor:
-    def __init__(self, engine: InferenceEngine, config: InferenceConfig):
-        self.engine = engine
-        self.config = config
-
-    async def process_item(self, item: Tuple[int, str]) -> Tuple[int, Optional[str], int, Optional[str]]:
-        index, text = item
-        try:
-            content, num_tokens = await self.engine.infer(text)
-            return (index, content, num_tokens, None)
-        except Exception as e:
-            return (index, None, 0, str(e))
-
-    async def process_batch(self, items: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
-        semaphore = asyncio.Semaphore(self.config.concurrency)
-        async def process_with_semaphore(item):
-            async with semaphore:
-                return await self.process_item(item)
-        return await asyncio.gather(*[process_with_semaphore(item) for item in items])
-      
-# 5. Error Handling
-def is_backpressure(error: httpx.HTTPStatusError):
-    if hasattr(error, "response") and hasattr(error.response, "status_code"):
-        return error.response.status_code in (429, 503)
-
-def is_other_error(error: httpx.HTTPStatusError):
-    if hasattr(error, "response") and hasattr(error.response, "status_code"):
-        return error.response.status_code != 503 and (
-            error.response.status_code >= 500 or error.response.status_code == 408)
-        
-# 6. Logging
-class Logger:
-    def __init__(self, config: InferenceConfig):
-        self.config = config
-        self.counter = 0
-        self.start_time = time.time()
-        self.enable_logging = config.enable_logging
-
-    def log_progress(self):
-        if not self.enable_logging:
-            return
-        self.counter += 1
-        if self.counter % self.config.logging_interval == 0:
-            elapsed = time.time() - self.start_time
-            print(f"Processed {self.counter} requests in {elapsed:.2f} seconds.")
-    
-    def log_total_time(self, total_items: int):
-        if not self.enable_logging:
-            return
-        total_time = time.time() - self.start_time
-        print(f"Total processing time: {total_time:.2f} seconds for {total_items} items.")
-        print(f"Average time per item: {total_time/total_items:.4f} seconds.")
-
-# Main class tying it all together
-class BatchInference:
-    def __init__(self, config: InferenceConfig):
-        self.config = config
-        client = OpenAIClient(config)
-        self.engine = InferenceEngine(client)
-        self.processor = BatchProcessor(self.engine, config)
-        self.logger = Logger(config)
-
-    async def __call__(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
-        self.logger.start_time = time.time()  # Reset start time
-        results = await self.processor.process_batch(texts_with_index)
-        for _ in results:
-            self.logger.log_progress()
-        self.logger.log_total_time(len(texts_with_index))
-        return results
+# # Get the current notebook path
+spark = DatabricksSession.builder.getOrCreate()
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..'))
+sys.path.append(current_directory)
+sys.path.append(root_directory)
 
 # COMMAND ----------
 
-import uuid
-from typing import List, Tuple, Optional
-from pyspark.sql import SparkSession, DataFrame
-from pyspark.sql.functions import monotonically_increasing_id
-import pandas as pd
+import asyncio
+import mlflow
+from pyspark.sql import SparkSession
+import nest_asyncio
 
-class DataProcessorConfig:
-    def __init__(self, input_table_name: str, input_column_name: str, input_num_rows: Optional[int] = None):
-        self.input_table_name = input_table_name
-        self.input_column_name = input_column_name
-        self.input_num_rows = input_num_rows
+nest_asyncio.apply()
 
-class DataProcessor:
-    def __init__(self, spark: SparkSession, config: DataProcessorConfig):
-        self.spark = spark
-        self.config = config
-        self.index_column = f"index_{uuid.uuid4().hex[:4]}"
-        self.source_sdf: Optional[DataFrame] = None
-        self.input_sdf: Optional[DataFrame] = None
-        self.texts_with_index: Optional[List[Tuple[int, str]]] = None
+from src.config.data_processor_config import DataProcessorConfig
+from src.config.inference_config import InferenceConfig
+from src.inference.batch_processor import BatchProcessor, BatchInference
+from src.data.processor import DataProcessor
 
-    def load_spark_dataframe(self) -> DataFrame:
-        """Load the Spark DataFrame from the input table and add an index column."""
-        self.source_sdf = (self.spark.table(self.config.input_table_name)
-                           .withColumn(self.index_column, monotonically_increasing_id()))
-        return self.source_sdf
+# COMMAND ----------
 
-    def select_and_limit_data(self, sdf: DataFrame) -> DataFrame:
-        """Select required columns and optionally limit the number of rows."""
-        result = sdf.select(self.index_column, self.config.input_column_name)
-        if self.config.input_num_rows:
-            result = result.limit(self.config.input_num_rows)
-        self.input_sdf = result
-        return self.input_sdf
+# MAGIC %md
+# MAGIC ## Run batch inference
 
-    def convert_to_list(self, sdf: DataFrame) -> List[Tuple[int, str]]:
-        """Convert Spark DataFrame to a list of tuples."""
-        pandas_df = sdf.toPandas()
-        return [row for row in pandas_df.itertuples(index=False, name=None)]
+# COMMAND ----------
 
-    def process(self) -> List[Tuple[int, str]]:
-        """Main method to process the data."""
-        self.source_sdf = self.load_spark_dataframe()
-        self.input_sdf = self.select_and_limit_data(self.source_sdf)
-        self.texts_with_index = self.convert_to_list(self.input_sdf)
-        return self.texts_with_index
-
-    def get_source_sdf(self) -> Optional[DataFrame]:
-        """Get the source Spark DataFrame."""
-        return self.source_sdf
-
-    def get_input_sdf(self) -> Optional[DataFrame]:
-        """Get the input Spark DataFrame."""
-        return self.input_sdf
-
-    def get_texts_with_index(self) -> Optional[List[Tuple[int, str]]]:
-        """Get the processed list of texts with index."""
-        return self.texts_with_index
-
-# Usage
-spark = SparkSession.builder.getOrCreate()  # You would typically get this from your Spark environment
+# Data processing configuration
 data_config = DataProcessorConfig(
     input_table_name="alex_m.gen_ai.news_qa_summarization",
     input_column_name="prompt",
-    input_num_rows=1000  # Optional
+    input_num_rows=100  # Optional
 )
+
+# Inference configuration
+inference_config = InferenceConfig(
+    endpoint="databricks-meta-llama-3-1-70b-instruct",
+    timeout=300,
+    max_retries_backpressure=3,
+    max_retries_other=3,
+    prompt="",
+    request_params={"temperature": 0.1, "max_tokens": 100},
+    concurrency=5,
+    logging_interval=40,
+    llm_task="chat", # task
+    enable_logging=False
+)
+
+# COMMAND ----------
+
+# Get API_ROOT and API_TOKEN
+API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
+API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
 
 processor = DataProcessor(spark, data_config)
 texts_with_index = processor.process()
@@ -282,7 +108,8 @@ input_sdf = processor.get_input_sdf()
 texts_with_index = processor.get_texts_with_index()
 index_column = processor.index_column
 
-# You can use these variables as needed
+# Print information about the processed data
+assert source_sdf, "Source DataFrame is not available"
 if source_sdf:
     print("Source DataFrame count:", source_sdf.count())
 if input_sdf:
@@ -290,51 +117,16 @@ if input_sdf:
 if texts_with_index:
     print("Number of processed texts:", len(texts_with_index))
 
+# Create BatchInference
+batch_inference = BatchInference(inference_config, API_TOKEN, API_ROOT)
 
-# COMMAND ----------
+# Run batch inference
+print("Running batch inference")
+results = asyncio.run(batch_inference.run_batch_inference(texts_with_index))
 
-# MAGIC %md
-# MAGIC ## Run batch inference
-
-# COMMAND ----------
-
-# DBTITLE 1,Run Batch Inference on "chat" endpoint
-inference_config = InferenceConfig(
-    endpoint="databricks-meta-llama-3-1-70b-instruct",
-    timeout=300,
-    max_retries_backpressure=3,
-    max_retries_other=3,
-    prompt="",
-    request_params={"temperature": 0.7, "max_tokens": 100},
-    concurrency=15,
-    logging_interval=40,
-    llm_task="chat",
-    enable_logging=False
-)
-
-batch_inference = BatchInference(inference_config)
-results = await batch_inference(texts_with_index)
-results
-
-# COMMAND ----------
-
-# DBTITLE 1,Run inference on "completion" endpoint
-inference_config = InferenceConfig(
-    endpoint="llama_8b_instruct_structured_outputs",
-    timeout=300,
-    max_retries_backpressure=3,
-    max_retries_other=3,
-    prompt="",
-    request_params={"temperature": 0.7, "max_tokens": 100},
-    concurrency=15,
-    logging_interval=40,
-    llm_task="completion",
-    enable_logging=True # TO DO fix logging code
-)
-
-batch_inference = BatchInference(inference_config)
-results = await batch_inference(texts_with_index)
-results
+print(results)
+assert len(results) == data_config.input_num_rows, "Results length does not match the data input"
+print("Batch inference completed successfully")
 
 # COMMAND ----------
 

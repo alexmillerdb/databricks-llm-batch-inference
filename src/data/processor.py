@@ -4,7 +4,14 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.functions import monotonically_increasing_id
 import pandas as pd
 
-from config.data_processor_config import DataProcessorConfig
+import os
+import sys
+
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..', '..'))
+sys.path.append(root_directory)
+
+from src.config.data_processor_config import DataProcessorConfig
 
 class DataProcessor:
     def __init__(self, spark: SparkSession, config: DataProcessorConfig):

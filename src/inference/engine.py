@@ -1,5 +1,12 @@
 from typing import List, Tuple, Optional, Dict, Any
-from api.client_interface import APIClientInterface
+import os
+import sys
+
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..', '..'))
+sys.path.append(root_directory)
+
+from src.api.client_interface import APIClientInterface
 
 class InferenceEngine:
     def __init__(self, client: APIClientInterface):

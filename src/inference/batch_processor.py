@@ -1,11 +1,17 @@
 from typing import List, Tuple, Optional, Dict, Any
 import asyncio
 import time
+import os
+import sys
 
-from inference.engine import InferenceEngine
-from config.inference_config import InferenceConfig
-from api.openai_client import OpenAIClient
-from utils.logger import Logger
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..', '..'))
+sys.path.append(root_directory)
+
+from src.inference.engine import InferenceEngine
+from src.config.inference_config import InferenceConfig
+from src.api.openai_client import OpenAIClient
+from src.utils.logger import Logger
 
 class BatchProcessor:
     def __init__(self, engine: InferenceEngine, config: InferenceConfig):

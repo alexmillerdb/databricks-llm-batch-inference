@@ -1,5 +1,12 @@
 import time
-from config.inference_config import InferenceConfig
+import os
+import sys
+
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..', '..'))
+sys.path.append(root_directory)
+
+from src.config.inference_config import InferenceConfig
 
 class Logger:
     def __init__(self, config: InferenceConfig):
