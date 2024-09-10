@@ -3,27 +3,18 @@
 
 import sys
 import os
-# from databricks.connect import DatabricksSession
+from databricks.connect import DatabricksSession
 # from pyspark.dbutils import DBUtils
 
 # # Get the current notebook path
-# spark = DatabricksSession.builder.getOrCreate()
-# dbutils = DBUtils(spark)
-notebook_path = dbutils.notebook.entry_point.getDbutils().notebook().getContext().notebookPath().get()
-notebook_directory = os.path.dirname(notebook_path)
+spark = DatabricksSession.builder.getOrCreate()
+current_directory = os.getcwd()
+root_directory = os.path.normpath(os.path.join(current_directory, '..'))
+sys.path.append(root_directory)
 
-# Assuming the repo is cloned/mounted at the same level as your notebook
-repo_root = os.path.join(notebook_directory, 'llm-batch-inference-structured-outputs')
-
-# Add only the repo root to sys.path
-sys.path.append(repo_root)
-
-# Change the current working directory to the repo root
-# %cd $repo_root
-
-# Verify the paths
-print(sys.path)
-print(os.getcwd())
+# # Verify the paths
+# print(sys.path)
+# print(f"Current directory: {current_directory}")
 
 import asyncio
 import mlflow
@@ -92,39 +83,4 @@ if __name__ == "__main__":
 
     print(results)
     assert len(results) == data_config.input_num_rows, "Results length does not match the data input"
-
-# async def main(data_config, inference_config):
-#     API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
-#     API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
-
-#     processor = DataProcessor(spark, data_config)
-#     texts_with_index = processor.process()
-
-#     # Now you can access the DataFrames and the processed list
-#     source_sdf = processor.get_source_sdf()
-#     input_sdf = processor.get_input_sdf()
-#     texts_with_index = processor.get_texts_with_index()
-#     index_column = processor.index_column
-
-#     # You can use these variables as needed
-#     if source_sdf:
-#         print("Source DataFrame count:", source_sdf.count())
-#     if input_sdf:
-#         print("Input DataFrame count:", input_sdf.count())
-#     if texts_with_index:
-#         print("Number of processed texts:", len(texts_with_index))
-
-#     print(f"Running batch inference")
-#     batch_inference = BatchInference(config=inference_config, API_ROOT=API_ROOT, API_TOKEN=API_TOKEN)
-#     results = await batch_inference(texts_with_index)
-
-#     return results
-
-# if __name__ == "__main__":
-#     # spark = get_spark_session()
-#     loop = asyncio.get_event_loop()
-#     results = loop.run_until_complete(main(data_config=data_config, 
-#                                            inference_config=inference_config))
-#     results = asyncio.run(main(data_config=data_config, inference_config=inference_config))
-#     print(results)
-#     assert len(results) == data_config.input_num_rows, "Results length does not match the data input"
+    print("Batch inference completed successfully")
