@@ -23,10 +23,10 @@ import nest_asyncio
 
 nest_asyncio.apply()
 
-from config.data_processor_config import DataProcessorConfig
-from config.inference_config import InferenceConfig
-from inference.batch_processor import BatchProcessor, BatchInference
-from data.processor import DataProcessor
+from src.config.data_processor_config import DataProcessorConfig
+from src.config.inference_config import InferenceConfig
+from src.inference.batch_processor import BatchProcessor, BatchInference
+from src.data.processor import DataProcessor
 
 # Data processing configuration
 data_config = DataProcessorConfig(
