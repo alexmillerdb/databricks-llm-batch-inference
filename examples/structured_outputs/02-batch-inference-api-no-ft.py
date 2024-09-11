@@ -1,6 +1,31 @@
 # Databricks notebook source
-# MAGIC %pip install -r requirements.txt
+# MAGIC %pip install -r ../../requirements.txt
 # MAGIC dbutils.library.restartPython()
+
+# COMMAND ----------
+
+# MAGIC %md ## Install whl file on cluster
+
+# COMMAND ----------
+
+from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.compute import Library
+
+w = WorkspaceClient()
+
+# Specify the cluster id where you want to install the library
+cluster_id = spark.conf.get("spark.databricks.clusterUsageTags.clusterId")
+
+# Specify the path to your .whl file
+whl_path = "/Volumes/alex_m/gen_ai/llm_batch_inference_whl/llm_batch_inference-0.1.0-py3-none-any.whl"
+
+# Install the .whl file as a library on the cluster
+# w.libraries.install()
+w.libraries.install(cluster_id, [Library(whl=whl_path)])
+
+# COMMAND ----------
+
+# MAGIC %md ## Import libraries and custom python package (from whl file)
 
 # COMMAND ----------
 
@@ -9,6 +34,7 @@ import json
 import httpx
 import re
 import asyncio
+import nest_asyncio
 import time
 from tenacity import (
     retry,
@@ -27,66 +53,42 @@ import openai
 from openai import OpenAI
 from databricks.sdk import WorkspaceClient
 
+from llm_batch_inference.config.data_processor_config import DataProcessorConfig
+from llm_batch_inference.config.inference_config import InferenceConfig
+from llm_batch_inference.inference.batch_processor import BatchProcessor, BatchInference
+from llm_batch_inference.data.processor import DataProcessor
+
+nest_asyncio.apply()
+
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Batch inference client & API
 # MAGIC
 # MAGIC The following code:
-# MAGIC - Sets up the asynchronous client 
-# MAGIC - Defines credentials for accessing the batch inference endpoint
-# MAGIC - Defines the prompt that is used for batch inference
+# MAGIC - Create `data_config` and `inference_config`
+# MAGIC - Setup `DataProcessor` to create tuples of (index, prompt)
+# MAGIC - Setup the `BatchInference` asynchronous client 
+# MAGIC - Run batch inference using asyncio
 
 # COMMAND ----------
 
-import sys
-import os
-from databricks.connect import DatabricksSession
-# from pyspark.dbutils import DBUtils
-
-# # Get the current notebook path
-spark = DatabricksSession.builder.getOrCreate()
-current_directory = os.getcwd()
-root_directory = os.path.normpath(os.path.join(current_directory, '..'))
-sys.path.append(current_directory)
-sys.path.append(root_directory)
-
-# COMMAND ----------
-
-import asyncio
-import mlflow
-from pyspark.sql import SparkSession
-import nest_asyncio
-
-nest_asyncio.apply()
-
-from src.config.data_processor_config import DataProcessorConfig
-from src.config.inference_config import InferenceConfig
-from src.inference.batch_processor import BatchProcessor, BatchInference
-from src.data.processor import DataProcessor
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Run batch inference
-
-# COMMAND ----------
-
+# DBTITLE 1,Setup data and inference config
 # Data processing configuration
 data_config = DataProcessorConfig(
     input_table_name="alex_m.gen_ai.news_qa_summarization",
     input_column_name="prompt",
-    input_num_rows=100  # Optional
+    input_num_rows=1000  # Optional
 )
 
 # Inference configuration
 inference_config = InferenceConfig(
-    endpoint="databricks-meta-llama-3-1-70b-instruct",
+    endpoint="databricks-meta-llama-3-1-70b-instruct",  # any FM API/PT endpoint
     timeout=300,
     max_retries_backpressure=3,
     max_retries_other=3,
-    prompt="",
-    request_params={"temperature": 0.1, "max_tokens": 100},
+    prompt="", # if you pass prompt it will dynamically create prompt within API client
+    request_params={"temperature": 0, "max_tokens": 500},
     concurrency=5,
     logging_interval=40,
     llm_task="chat", # task
@@ -95,6 +97,7 @@ inference_config = InferenceConfig(
 
 # COMMAND ----------
 
+# DBTITLE 1,Process text data and run batch inference
 # Get API_ROOT and API_TOKEN
 API_ROOT = mlflow.utils.databricks_utils.get_databricks_host_creds().host
 API_TOKEN = mlflow.utils.databricks_utils.get_databricks_host_creds().token
@@ -131,7 +134,7 @@ print("Batch inference completed successfully")
 # COMMAND ----------
 
 # MAGIC %md 
-# MAGIC ## Join responses to source dataframe and write to UC
+# MAGIC ## Extract JSON responses, join responses to source dataframe and write to UC
 
 # COMMAND ----------
 
@@ -187,6 +190,16 @@ output_sdf.write.mode("overwrite").option("mergeSchema", "true").saveAsTable("al
 
 # COMMAND ----------
 
+# DBTITLE 1,Calculate Incorrect JSON outputs
 null_ct = output_sdf.filter(F.col("resp_chat_parsed").isNull()).count()
 print(f"Total null ct: {null_ct}")
 print(f"Percent null ct: {null_ct / output_sdf.count()}")
+
+# COMMAND ----------
+
+ft_dataset = output_sdf.filter(F.col("resp_chat_parsed").isNotNull()) \
+  .select(F.col("prompt"), F.to_json(F.col("resp_chat_parsed")).alias("response"))
+
+ft_dataset.display()
+assert ft_dataset.filter(F.col("response").isNull()).count() == 0, "Null response found in dataset"
+ft_dataset.write.mode("overwrite").option("overwriteSchema", "true").saveAsTable("alex_m.gen_ai.news_qa_summarization_llm_ft_dataset")

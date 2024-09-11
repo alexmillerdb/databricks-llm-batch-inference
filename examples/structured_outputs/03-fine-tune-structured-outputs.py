@@ -22,10 +22,10 @@
 
 # COMMAND ----------
 
-ft_table_path = "alex_m.gen_ai.news_qa_summarization_llm_output_ft_data"
+ft_table_path = "alex_m.gen_ai.news_qa_summarization_llm_ft_dataset"
 MODEL = 'meta-llama/Meta-Llama-3-8B-Instruct' # "student" model
 # MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct'
-REGISTER_TO = 'alex_m.gen_ai.llama_8b_instruct_structured_outputs' # where to register your finetuned model for deployment
+REGISTER_TO = 'alex_m.gen_ai.llama_8b_instruct_structured_outputs_v2' # where to register your finetuned model for deployment
 DATA_PREP_CLUSTER_ID = spark.conf.get("spark.databricks.clusterUsageTags.clusterId") # spark cluster to prepare your UC table for training
 
 # COMMAND ----------
@@ -47,12 +47,20 @@ finetuning_run = fm.create(
     data_prep_cluster_id=DATA_PREP_CLUSTER_ID,
     register_to=REGISTER_TO,
     task_type="INSTRUCTION_FINETUNE",
-    training_duration="5ep"
+    training_duration="3ep"
 )
 
 # COMMAND ----------
 
 finetuning_run.get_events()
+
+# COMMAND ----------
+
+# import time
+
+# while finetuning_run.status != "COMPLETED":
+#     print(finetuning_run.status)
+#     time.sleep(30)
 
 # COMMAND ----------
 
@@ -68,10 +76,6 @@ def get_latest_model_version(model_name):
         if version_int > latest_version:
             latest_version = version_int
     return latest_version
-
-# COMMAND ----------
-
-get_latest_model_version(REGISTER_TO)
 
 # COMMAND ----------
 
@@ -94,7 +98,7 @@ endpoint_config = EndpointCoreConfigInput(
             scale_to_zero_enabled=True
         )
     ],
-    auto_capture_config = AutoCaptureConfigInput(catalog_name=catalog, schema_name=db, enabled=True, table_name_prefix="fine_tuned_llm_frontier")
+    auto_capture_config = AutoCaptureConfigInput(catalog_name=catalog, schema_name=db, enabled=True, table_name_prefix="fine_tuned_llm")
 )
 
 force_update = False #Set this to True to release a newer version (the demo won't update the endpoint to a newer model version by default)
