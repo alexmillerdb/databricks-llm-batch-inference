@@ -12,64 +12,9 @@
 
 # COMMAND ----------
 
-import yaml
-
-with open('config.yaml', 'r') as file:
-    config = yaml.safe_load(file)
-
-# Access configuration values
-global_config = config['global']
-batch_inference_config = config['batch_inference']
-config
-
-# COMMAND ----------
-
-# config = {
-#   "catalog": "alex_m",
-#   "schema": "gen_ai",
-#   "batch_inference_config": {
-#     "endpoint_config": {
-#       "endpoint_name": "meta_llama_3_8b_instruct_frontier",
-#       "concurrency": 40
-#     },
-#     "request_config": {
-#       "chat": {
-#         "messages": [
-#           {
-#             "role": "user",
-#             "content": ["$prompt", "$text"]
-#           }
-#         ],
-#         "request_params": "$request_params"
-#       },
-#       "text": {
-#         "prompt": ["$prompt", "$text"],
-#         "request_params": "$request_params"
-#       },
-#       "request_params": {
-#         "max_tokens": 1000, 
-#         "temperature": 0
-#       },
-#     },
-#     "data_config": {
-#       "input_table_name": "news_qa_summarization",
-#       "output_table_name": "news_qa_summarization_llm_output",
-#       "input_column_name": "prompt",
-#       "prompt": ""
-#     },
-#     "client_config": {
-#       "timeout": 300,
-#       "max_retries_backpressure": 20,
-#       "max_retries_other": 5,
-#     }
-#   }
-# }
-
-# COMMAND ----------
-
-catalog = "main"
-schema = "alex_m"
-endpoint = "meta_llama_3_8b_instruct_frontier"
+catalog = "alex_m"
+schema = "gen_ai"
+endpoint = "databricks-meta-llama-3-1-70b-instruct"
 
 # COMMAND ----------
 
