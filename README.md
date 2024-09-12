@@ -12,6 +12,7 @@ The goal of this project is to simplify batch inference with LLMs through simple
 - Simplified API that allows you to iterate quickly without having to worry about writing Python async or Spark UDF commands
 - Built-in retry logic on the client-side for specific error status codes such as 429 and 503
 - Simple developer experience that allows users to test and measure different prompts and concurrent requests to meet SLAs (throughput/latency) and model performance
+- Examples for specific LLM use cases such as fine-tuning LLM using Mosaic fine-tuning for structured outputs
 
 ## Installation
 
