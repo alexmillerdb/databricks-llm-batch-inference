@@ -8,9 +8,8 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/alexmillerdb/databricks-llm-batch-inference",
-    version="0.1.0",
-    packages=find_packages(where="llm_batch_inference"),
-    package_dir={"": "llm_batch_inference"},
+    version="0.1.1",
+    packages=find_packages(include=['llm_batch_inference', 'llm_batch_inference.*']),
     install_requires=[
         "httpx==0.27.0",
         "mlflow-skinny[databricks]",

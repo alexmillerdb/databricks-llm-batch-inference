@@ -17,7 +17,7 @@ w = WorkspaceClient()
 cluster_id = spark.conf.get("spark.databricks.clusterUsageTags.clusterId")
 
 # Specify the path to your .whl file
-whl_path = "/Volumes/alex_m/gen_ai/llm_batch_inference_whl/llm_batch_inference-0.1.0-py3-none-any.whl"
+whl_path = "/Volumes/alex_m/gen_ai/llm_batch_inference_whl/llm_batch_inference-0.1.1-py3-none-any.whl"
 
 # Install the .whl file as a library on the cluster
 # w.libraries.install()
@@ -31,17 +31,8 @@ w.libraries.install(cluster_id, [Library(whl=whl_path)])
 
 import os
 import json
-import httpx
 import re
 import asyncio
-import nest_asyncio
-import time
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    retry_if_exception,
-    wait_random_exponential,
-)
 from pyspark.sql import functions as F
 from pyspark.sql.functions import lit
 from pyspark.sql.types import IntegerType, StructType, StructField, StringType, BooleanType
@@ -49,16 +40,12 @@ from pyspark.sql.types import IntegerType, StructType, StructField, StringType, 
 from mlflow.utils.databricks_utils import get_databricks_host_creds
 import mlflow
 
-import openai
-from openai import OpenAI
 from databricks.sdk import WorkspaceClient
 
 from llm_batch_inference.config.data_processor_config import DataProcessorConfig
 from llm_batch_inference.config.inference_config import InferenceConfig
 from llm_batch_inference.inference.batch_processor import BatchProcessor, BatchInference
 from llm_batch_inference.data.processor import DataProcessor
-
-nest_asyncio.apply()
 
 # COMMAND ----------
 
@@ -78,7 +65,7 @@ nest_asyncio.apply()
 data_config = DataProcessorConfig(
     input_table_name="alex_m.gen_ai.news_qa_summarization",
     input_column_name="prompt",
-    input_num_rows=1000  # Optional
+    input_num_rows=100  # Optional
 )
 
 # Inference configuration

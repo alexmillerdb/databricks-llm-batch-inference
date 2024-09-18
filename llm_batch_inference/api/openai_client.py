@@ -26,13 +26,50 @@ class OpenAIClient(APIClientInterface):
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=1, max=20),
     )
-    async def predict(self, text: str) -> Tuple[str, int]:
+    async def async_predict(self, text: str) -> Tuple[str, int]:
         # If the model is chat-based, use the ChatCompletion API
         if self.config.llm_task == "chat":
             messages = [{"role": "user", "content": self.config.prompt + str(text) if self.config.prompt else str(text)}]
             try:
                 response = await asyncio.to_thread(
                     self.client.chat.completions.create,
+                    model=self.config.endpoint,
+                    messages=messages,
+                    **self.config.request_params
+                )
+                content = response.choices[0].message.content if response.choices and response.choices[0].message else None
+                total_tokens = response.usage.total_tokens if response.usage else 0
+                if content is None:
+                    raise ValueError("Received empty content from OpenAI ChatCompletion API")
+                return content, total_tokens
+            except Exception as e:
+                print(f"Error while making OpenAI ChatCompletion API call: {e}")
+                raise
+
+        # If the model expects plain completion (non-chat)
+        elif self.config.llm_task == "completion":
+            try:
+                response = await asyncio.to_thread(
+                    self.client.completions.create,
+                    model=self.config.endpoint,
+                    prompt=self.config.prompt + str(text) if self.config.prompt else str(text),
+                    **self.config.request_params
+                )
+                content = response.choices[0].text if response.choices else None
+                total_tokens = response.usage.total_tokens if response.usage else 0
+                if content is None:
+                    raise ValueError("Received empty content from OpenAI Completion API")
+                return content, total_tokens
+            except Exception as e:
+                print(f"Error while making OpenAI Completion API call: {e}")
+                raise
+
+    def predict(self, text: str) -> Tuple[str, int]:
+        # If the model is chat-based, use the ChatCompletion API
+        if self.config.llm_task == "chat":
+            messages = [{"role": "user", "content": self.config.prompt + str(text) if self.config.prompt else str(text)}]
+            try:
+                response = self.client.chat.completions.create(
                     model=self.config.endpoint,
                     messages=messages,
                     **self.config.request_params
@@ -47,8 +84,7 @@ class OpenAIClient(APIClientInterface):
         # If the model expects plain completion (non-chat)
         elif self.config.llm_task == "completion":
             try:
-                response = await asyncio.to_thread(
-                    self.client.completions.create,
+                response = self.client.completions.create(
                     model=self.config.endpoint,
                     prompt=self.config.prompt + str(text) if self.config.prompt else str(text),
                     **self.config.request_params

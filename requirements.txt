@@ -8,3 +8,5 @@ databricks-sdk
 databricks-connect
 asyncio
 nest-asyncio
+pytest
+pytest-asyncio
