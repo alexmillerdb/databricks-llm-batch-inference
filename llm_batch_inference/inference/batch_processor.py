@@ -75,11 +75,21 @@ class BatchProcessor:
 class BatchInference:
     def __init__(self, config: InferenceConfig, API_TOKEN: str, API_ROOT: str):
         self.config = config
-        nest_asyncio.apply()
+        self.nest_asyncio_applied = False
+        # nest_asyncio.apply()
         client = OpenAIClient(config, API_ROOT=API_ROOT, API_TOKEN=API_TOKEN)
         self.engine = InferenceEngine(client)
         self.processor = BatchProcessor(self.engine, config)
         self.logger = Logger(config)
+
+    def _ensure_nest_asyncio(self):
+        if not self.nest_asyncio_applied:
+            try:
+                nest_asyncio.apply()
+                self.nest_asyncio_applied = True
+            except RuntimeError:
+                # nest_asyncio is already applied, ignore the error
+                self.nest_asyncio_applied = True
 
     async def __call__(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
         self.logger.start_time = time.time()  # Reset start time
@@ -91,14 +101,10 @@ class BatchInference:
 
     async def run_batch_inference_async(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
         return await self(texts_with_index)
-
+    
     def run_batch_inference(self, texts_with_index: List[Tuple[int, str]]) -> List[Tuple[int, Optional[str], int, Optional[str]]]:
-        self.logger.start_time = time.time()  # Reset start time
-        results = self.processor.process_batch(texts_with_index)
-        for _ in results:
-            self.logger.log_progress()
-        self.logger.log_total_time(len(texts_with_index))
-        return results
+        self._ensure_nest_asyncio()
+        return asyncio.run(self.run_batch_inference_async(texts_with_index))
 
     def run_batch_inference_pandas_udf(self, df: DataFrame, input_col: str, output_cols: List[str], schema: StructType) -> DataFrame:
 

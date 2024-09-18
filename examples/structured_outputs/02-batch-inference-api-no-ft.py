@@ -16,11 +16,10 @@ w = WorkspaceClient()
 # Specify the cluster id where you want to install the library
 cluster_id = spark.conf.get("spark.databricks.clusterUsageTags.clusterId")
 
-# Specify the path to your .whl file
+# # Specify the path to your .whl file
 whl_path = "/Volumes/alex_m/gen_ai/llm_batch_inference_whl/llm_batch_inference-0.1.1-py3-none-any.whl"
 
-# Install the .whl file as a library on the cluster
-# w.libraries.install()
+# # Install the .whl file as a library on the cluster
 w.libraries.install(cluster_id, [Library(whl=whl_path)])
 
 # COMMAND ----------
@@ -32,12 +31,10 @@ w.libraries.install(cluster_id, [Library(whl=whl_path)])
 import os
 import json
 import re
-import asyncio
 from pyspark.sql import functions as F
 from pyspark.sql.functions import lit
 from pyspark.sql.types import IntegerType, StructType, StructField, StringType, BooleanType
 
-from mlflow.utils.databricks_utils import get_databricks_host_creds
 import mlflow
 
 from databricks.sdk import WorkspaceClient
@@ -112,7 +109,7 @@ batch_inference = BatchInference(inference_config, API_TOKEN, API_ROOT)
 
 # Run batch inference
 print("Running batch inference")
-results = asyncio.run(batch_inference.run_batch_inference(texts_with_index))
+results = batch_inference.run_batch_inference(texts_with_index)
 
 print(results)
 assert len(results) == data_config.input_num_rows, "Results length does not match the data input"
