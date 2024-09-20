@@ -75,6 +75,8 @@ class BatchProcessor:
 class BatchInference:
     def __init__(self, config: InferenceConfig, API_TOKEN: str, API_ROOT: str):
         self.config = config
+        self.API_TOKEN = API_TOKEN
+        self.API_ROOT = API_ROOT
         self.nest_asyncio_applied = False
         # nest_asyncio.apply()
         client = OpenAIClient(config, API_ROOT=API_ROOT, API_TOKEN=API_TOKEN)
@@ -108,6 +110,56 @@ class BatchInference:
 
     def run_batch_inference_pandas_udf(self, df: DataFrame, input_col: str, output_cols: List[str], schema: StructType) -> DataFrame:
 
-        result_df = self.processor.process_with_pandas_udf(df, input_col, output_cols, schema)
+        config = self.config
+        api_token = self.API_TOKEN
+        api_root = self.API_ROOT
 
-        return result_df
+        @pandas_udf(schema)
+        def chat_udf(iterator: Iterator[pd.Series]) -> Iterator[pd.DataFrame]:
+
+            client = OpenAIClient(config, API_ROOT=api_root, API_TOKEN=api_token)
+            engine = InferenceEngine(client)
+            
+            for batch in iterator:
+                results = {col: [] for col in output_cols}
+                for text in batch:
+                    try:
+                        content, num_tokens = engine.infer(text)
+                        results[output_cols[0]].append(content)
+                        results[output_cols[1]].append(num_tokens)
+                        results[output_cols[2]].append(None)
+                    except Exception as e:
+                        results[output_cols[0]].append(None)
+                        results[output_cols[1]].append(0)
+                        results[output_cols[2]].append(str(e))
+
+                yield pd.DataFrame(results)
+                
+        return df.withColumn("result", chat_udf(df[input_col]))
+        # result_df = df.withColumn("result", chat_udf(df[input_col]))
+    
+        # # Select original columns and new result columns
+        # select_expr = df.columns + [f"result.{col}" for col in output_cols]
+        # return result_df.select(*select_expr).drop("result")
+
+
+
+        # def create_udf():
+        #     client = OpenAIClient(self.config, API_ROOT=self.API_ROOT, API_TOKEN=self.API_TOKEN)
+        #     engine = InferenceEngine(client)
+
+        #     @pandas_udf(schema)
+        #     def chat_udf(texts: pd.Series) -> pd.DataFrame:
+        #         results = []
+        #         for text in texts:
+        #             try:
+        #                 content, num_tokens = engine.infer(text)
+        #                 results.append((content, num_tokens, None))
+        #             except Exception as e:
+        #                 results.append((None, 0, str(e)))
+        #         return pd.DataFrame(results, columns=output_cols)
+
+        #     return chat_udf
+
+        # udf = create_udf()
+        # return df.withColumn("result", udf(df[input_col])).select("*", "result.*").drop("result")
