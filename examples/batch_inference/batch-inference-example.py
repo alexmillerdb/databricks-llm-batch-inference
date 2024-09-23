@@ -1,5 +1,6 @@
 # Databricks notebook source
 # MAGIC %pip install -r ../../requirements.txt
+# MAGIC %pip install git+https://github.com/alexmillerdb/databricks-llm-batch-inference.git
 # MAGIC dbutils.library.restartPython()
 
 # COMMAND ----------
