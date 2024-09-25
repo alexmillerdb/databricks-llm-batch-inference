@@ -16,15 +16,13 @@ The goal of this project is to simplify batch inference with LLMs through simple
 
 ## Installation
 
-To install, please run at the top level folder
+To install, please run at top of Databricks notebook. Refer to https://github.com/alexmillerdb/databricks-llm-batch-inference/blob/main/examples/batch_inference/batch-inference-example.py 
 
 ```python
 
-python setup.py bdist_wheel
+%pip install git+https://github.com/alexmillerdb/databricks-llm-batch-inference.git
 
 ```
-
-If you are running in Databricks, download from the new `dist` folder in your workspace the wheel file that was created there. Upload this to a Volume location you have available, and change the `whl_path` variable to reference if you are building off any examples.
 
 ## Notice
 
